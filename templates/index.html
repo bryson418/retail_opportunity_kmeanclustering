@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Business Opportunity Map</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .panel {
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        #map {
+            height: 500px;
+            width: 100%;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            cursor: crosshair;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        select {
+            padding: 8px;
+            font-size: 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-width: 200px;
+        }
+        #results {
+            font-size: 16px;
+            line-height: 1.6;
+            min-height: 60px;
+        }
+        .success {
+            color: #2e7d32;
+        }
+        .error {
+            color: #d32f2f;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+        .result-box {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        .coordinates {
+            font-family: monospace;
+            background-color: #e9ecef;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>📍 Retail Opportunity Map</h2>
+        <p><strong>Click anywhere on the map</strong> to analyze business opportunities at that location.</p>
+    </div>
+
+    <div class="panel">
+        <div class="controls">
+            <label for="business_type">Business Type:</label>
+            <select id="business_type">
+                {% for btype in business_types %}
+                <option value="{{ btype }}">{{ btype.replace('_', ' ').title() }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="map"></div>
+        
+        <div style="margin-top: 10px; font-size: 12px; color: #666;">
+            🔵 Blue circles = Sensor locations | 🔴 Red lines = Traffic data | 📍 Click anywhere to analyze
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>📊 Analysis Results</h3>
+        <div id="results">
+            🧠 Click on the map to analyze business opportunities at any location.
+        </div>
+    </div>
+
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([{{ center_lat }}, {{ center_lon }}], 13);
+        
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Add sensor markers
+        const sensorData = {{ sensor_data|safe }};
+        console.log('Sensor data:', sensorData);
+        sensorData.forEach(function(sensor) {
+            L.circleMarker([sensor.lat, sensor.lon], {
+                radius: 6,
+                color: '#0066cc',
+                fillColor: '#0066cc',
+                fillOpacity: 0.7,
+                weight: 2
+            }).bindPopup(`<b>Sensor:</b> ${sensor.name}<br><b>Coordinates:</b> ${sensor.lat.toFixed(5)}, ${sensor.lon.toFixed(5)}`).addTo(map);
+        });
+
+        // Add traffic data if available
+        const trafficData = {{ traffic_data|safe }};
+        trafficData.forEach(function(line) {
+            L.polyline(line, {
+                color: 'red',
+                weight: 2,
+                opacity: 0.6
+            }).addTo(map);
+        });
+
+        // Store the current analysis marker
+        let currentMarker = null;
+
+        // Handle map clicks
+        map.on('click', function(e) {
+            const lat = e.latlng.lat;
+            const lon = e.latlng.lng;
+            
+            console.log('Map clicked at:', lat, lon);
+            
+            // Remove previous marker
+            if (currentMarker) {
+                map.removeLayer(currentMarker);
+            }
+            
+            // Add new marker
+            currentMarker = L.marker([lat, lon], {
+                icon: L.icon({
+                    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png',
+                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                    iconSize: [25, 41],
+                    iconAnchor: [12, 41],
+                    popupAnchor: [1, -34],
+                    shadowSize: [41, 41]
+                })
+            }).addTo(map);
+            
+            // Analyze the location
+            analyzeLocation(lat, lon);
+        });
+
+
+        async function analyzeLocation(lat, lon) {
+            const businessType = document.getElementById('business_type').value;
+            const resultsDiv = document.getElementById('results');
+            
+            // Show loading state
+            resultsDiv.innerHTML = '<span class="loading">🔍 Analyzing location...</span>';
+            
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        lat: lat,
+                        lon: lon,
+                        business_type: businessType
+                    })
+                });
+
+                const data = await response.json();
+                console.log('Analysis response:', data);
+
+                if (data.success) {
+                    const opportunityColor = getOpportunityColor(data.opportunity);
+                    resultsDiv.innerHTML = `
+                        <div class="result-box">
+                            <h4>📍 Location Analysis Results</h4>
+                            <div><strong>Coordinates:</strong> <span class="coordinates">${data.lat.toFixed(5)}, ${data.lon.toFixed(5)}</span></div>
+                            <div><strong>Business Type:</strong> ${data.business_type.replace(/_/g, ' ').toUpperCase()}</div>
+                            <div><strong>Competition Score:</strong> ${data.competition_score}</div>
+                            <div><strong>Opportunity Level:</strong> <span style="color: ${opportunityColor}; font-weight: bold;">${data.opportunity}</span></div>
+                        </div>
+                    `;
+                    
+                    // Update marker popup
+                    if (currentMarker) {
+                        currentMarker.bindPopup(`
+                            <b>Analysis Result</b><br>
+                            <b>Business:</b> ${data.business_type.replace(/_/g, ' ')}<br>
+                            <b>Competition:</b> ${data.competition_score}<br>
+                            <b>Opportunity:</b> <span style="color: ${opportunityColor}; font-weight: bold;">${data.opportunity}</span>
+                        `).openPopup();
+                    }
+                } else {
+                    resultsDiv.innerHTML = `<span class="error">❌ Analysis failed: ${data.error}</span>`;
+                }
+            } catch (error) {
+                console.error('Analysis error:', error);
+                resultsDiv.innerHTML = `<span class="error">❌ Network error: ${error.message}</span>`;
+            }
+        }
+
+        function getOpportunityColor(opportunity) {
+            switch(opportunity) {
+                case 'High Opportunity': return '#2e7d32';
+                case 'Medium Opportunity': return '#f57c00';
+                case 'Low Opportunity': return '#d32f2f';
+                default: return '#666';
+            }
+        }
+
+        console.log('Map initialized and ready for clicks!');
+    </script>
+</body>
+</html>
